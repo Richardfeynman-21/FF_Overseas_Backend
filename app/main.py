@@ -107,7 +107,7 @@ async def call_gemini(system_prompt: str, history: list, user_message: str) -> s
     })
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
         response = await client.post(
             url,
             headers={"Content-Type": "application/json"},
@@ -144,7 +144,7 @@ async def call_openrouter(system_prompt: str, history: list, user_message: str) 
     messages.append({"role": "user", "content": user_message})
 
     url = "https://openrouter.ai/api/v1/chat/completions"
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=8.0) as client:
         response = await client.post(
             url,
             headers={
