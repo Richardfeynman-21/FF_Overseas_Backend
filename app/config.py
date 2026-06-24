@@ -17,4 +17,8 @@ class Settings(BaseSettings):
     RATE_LIMIT_MAX: int = 20
     RATE_LIMIT_WINDOW: int = 600  # 10 minutes in seconds
 
+    # Access Control & Security
+    ALLOWED_ORIGINS: str = "*"  # Comma-separated list of domains allowed (e.g. "https://my-app.vercel.app")
+    FRONTEND_API_KEY: Optional[str] = None
+
 settings = Settings()

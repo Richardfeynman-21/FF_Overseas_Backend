@@ -36,9 +36,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Orbit Chatbot Backend", lifespan=lifespan)
 
 # Setup CORS
+origins = ["*"]
+if settings.ALLOWED_ORIGINS and settings.ALLOWED_ORIGINS != "*":
+    origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -179,6 +183,15 @@ async def get_chat_reply(system_prompt: str, history: list, user_message: str) -
 
 @app.post("/api/public-chat")
 async def chat_endpoint(request: ChatRequest, req: Request):
+    # Verify API Key if configured
+    if settings.FRONTEND_API_KEY:
+        api_key_header = req.headers.get("X-ORBIT-API-KEY")
+        if not api_key_header or api_key_header != settings.FRONTEND_API_KEY:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access forbidden: Invalid API Key."}
+            )
+
     client_ip = req.client.host if req.client else "unknown"
     
     if not check_rate_limit(client_ip):
