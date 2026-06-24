@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW: int = 600  # 10 minutes in seconds
 
     # Access Control & Security
-    ALLOWED_ORIGINS: str = "*"  # Comma-separated list of domains allowed (e.g. "https://my-app.vercel.app")
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,https://ffoverseas.in,https://www.ffoverseas.in"
     FRONTEND_API_KEY: Optional[str] = None
 
 settings = Settings()
