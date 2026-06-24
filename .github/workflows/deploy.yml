@@ -1,0 +1,28 @@
+name: Deploy FastAPI Chatbot to AWS EC2
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # Navigate to application directory
+            cd /home/ubuntu/app
+
+            # Pull the latest code from GitHub
+            git pull origin main
+
+            # Rebuild and restart the container in background
+            docker compose up --build -d
+
+            # Clean up unused Docker resources
+            docker image prune -f
