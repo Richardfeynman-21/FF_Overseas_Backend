@@ -78,10 +78,11 @@ def build_system_prompt(limit_reached: bool) -> str:
         "- NO visa-case-specific advice.\n"
         "- NO outcome guarantees (admissions, scholarships, visas).\n"
         "- For anything personal or requiring evaluation, redirect the user to \"register or log in so Fly & Flourish Overseas can access your profile and give tailored guidance.\"\n\n"
-        "Style rules:\n"
+        "Style and Language rules:\n"
         "- Be concise (3-5 sentences) unless explicitly asked for more detail.\n"
         "- Maintain a warm, professional, and encouraging tone.\n"
-        "- Do NOT use \"as an AI\" or similar disclaimers."
+        "- Do NOT use \"as an AI\" or similar disclaimers.\n"
+        "- Language: You MUST respond ONLY in English. If the user asks a question in another language, politely reply in English stating that you can only assist in English."
     )
     if limit_reached:
         prompt += "\n\nIMPORTANT: This is the user's last free question before they must register. End your answer with a brief, friendly line inviting them to sign up or log in to keep chatting and get personalized guidance based on their profile."
