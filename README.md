@@ -46,23 +46,36 @@ This is the Python-based FastAPI backend for the Fly & Flourish (ORBIT) public p
 
 This project has an automated GitHub Actions deployment workflow configured in `.github/workflows/deploy.yml` that SSHes into your AWS EC2 instance, pulls the latest code, and runs `docker compose up --build -d`.
 
-### 1. Set up your EC2 Instance
-SSH into your EC2 server and install Docker:
+### 1. Set up your EC2 Instance (Amazon Linux)
+SSH into your EC2 server (as `ec2-user`) and install Docker:
 ```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker ubuntu
+# Update package manager
+sudo dnf update -y     # (Use 'sudo yum update -y' if on Amazon Linux 2)
+
+# Install Docker
+sudo dnf install -y docker   # (Use 'sudo amazon-linux-extras install docker -y' if on Amazon Linux 2)
+
+# Start and enable Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Install Docker Compose plugin
+sudo dnf install -y docker-compose-plugin
+
+# Add default 'ec2-user' to the docker group (so you don't need sudo)
+sudo usermod -aG docker ec2-user
+
 # Log out and log back in to apply group changes
 ```
 
 ### 2. Prepare the Deployment Directory
-On your EC2 server, clone the repository inside `/home/ubuntu/app`:
+On your EC2 server, clone the repository inside `/home/ec2-user/app`:
 ```bash
-git clone https://github.com/Richardfeynman-21/FF_Overseas_Backend.git /home/ubuntu/app
+git clone https://github.com/Richardfeynman-21/FF_Overseas_Backend.git /home/ec2-user/app
 ```
-Create a `.env` file inside `/home/ubuntu/app/` with your API keys:
+Create a `.env` file inside `/home/ec2-user/app/` with your API keys:
 ```bash
-cd /home/ubuntu/app
+cd /home/ec2-user/app
 nano .env
 ```
 *(Paste your API keys and save).*
@@ -70,5 +83,6 @@ nano .env
 ### 3. Configure GitHub Repository Secrets
 In your GitHub repository, go to **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret** and add:
 - `EC2_HOST`: The public IP / public DNS of your EC2 instance.
-- `EC2_USERNAME`: Usually `ubuntu`.
+- `EC2_USERNAME`: `ec2-user`
 - `EC2_SSH_KEY`: The contents of your private SSH key file (`.pem`).
+
