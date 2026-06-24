@@ -15,14 +15,20 @@ jobs:
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+
             # Navigate to application directory
             cd /home/ec2-user/app
 
             # Pull the latest code from GitHub
             git pull origin main
 
-            # Rebuild and restart the container in background
-            docker compose up --build -d
+            # Rebuild and restart the container in background (check for docker compose vs docker-compose)
+            if docker compose version >/dev/null 2>&1; then
+                docker compose up --build -d
+            else
+                docker-compose up --build -d
+            fi
 
             # Clean up unused Docker resources
             docker image prune -f
