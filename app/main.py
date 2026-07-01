@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import logging
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -10,6 +11,10 @@ from pydantic import BaseModel
 import httpx
 
 from app.config import settings
+from app.db import init_pool, close_pool
+from app.universities import router as universities_router
+
+logger = logging.getLogger(__name__)
 
 # Session store: sessionId -> {"messageCount": int, "history": list, "createdAt": float}
 sessions = {}
@@ -30,10 +35,21 @@ async def cleanup_sessions_loop():
 async def lifespan(app: FastAPI):
     # Start background cleanup task
     cleanup_task = asyncio.create_task(cleanup_sessions_loop())
+    # Initialize universities database pool
+    try:
+        await init_pool()
+        logger.info("Universities database pool ready.")
+    except Exception as e:
+        logger.warning(f"Universities database pool failed to initialize: {e}. University endpoints will be unavailable.")
     yield
     cleanup_task.cancel()
+    # Close universities database pool
+    await close_pool()
 
-app = FastAPI(title="Orbit Chatbot Backend", lifespan=lifespan)
+app = FastAPI(title="FF Overseas Backend", lifespan=lifespan)
+
+# Register routers
+app.include_router(universities_router)
 
 # Setup CORS
 origins = ["*"]

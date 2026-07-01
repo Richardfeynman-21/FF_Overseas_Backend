@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_MAX: int = 20
     RATE_LIMIT_WINDOW: int = 600  # 10 minutes in seconds
 
+    # Universities Database (separate from main ffoverseas_db)
+    UNIVERSITIES_DATABASE_URL: str = "postgresql://ffoverseas:ffoverseas_pass@localhost:5432/universities_db"
+
     # Access Control & Security
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,https://ffoverseas.in,https://www.ffoverseas.in"
     FRONTEND_API_KEY: Optional[str] = None
