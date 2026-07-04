@@ -26,7 +26,7 @@ echo "[1/4] Dumping local database '$LOCAL_DB'..."
 pg_dump -U "$LOCAL_USER" -h localhost -F c -b -v -f "$DUMP_FILE" "$LOCAL_DB"
 
 echo "[2/4] Resetting RDS Database '$RDS_DB' on Host..."
-PGPASSWORD="$RDS_PASSWORD" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres -c "DROP DATABASE IF EXISTS $RDS_DB;"
+PGPASSWORD="$RDS_PASSWORD" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres -c "DROP DATABASE IF EXISTS $RDS_DB WITH (FORCE);"
 PGPASSWORD="$RDS_PASSWORD" psql -h "$RDS_HOST" -U "$RDS_USER" -d postgres -c "CREATE DATABASE $RDS_DB;"
 
 echo "[3/4] Restoring dump to AWS RDS..."

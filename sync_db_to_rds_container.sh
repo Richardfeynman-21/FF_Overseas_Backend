@@ -18,7 +18,7 @@ echo "  Container -> RDS Sync Pipeline Started "
 echo "========================================="
 
 echo "[1/2] Resetting RDS database 'universities_db'..."
-psql -d "$ADMIN_URL" -c "DROP DATABASE IF EXISTS universities_db;"
+psql -d "$ADMIN_URL" -c "DROP DATABASE IF EXISTS universities_db WITH (FORCE);"
 psql -d "$ADMIN_URL" -c "CREATE DATABASE universities_db;"
 
 echo "[2/2] Restoring dump to AWS RDS..."
