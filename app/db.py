@@ -13,6 +13,42 @@ logger = logging.getLogger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
+async def run_migrations(pool: asyncpg.Pool) -> None:
+    """Run universities database schema migrations on startup."""
+    async with pool.acquire() as conn:
+        try:
+            # Check if column exists
+            exists = await conn.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 
+                    FROM information_schema.columns 
+                    WHERE table_name='universities' AND column_name='course_count'
+                );
+                """
+            )
+            if not exists:
+                logger.info("Migrating universities database: Adding course_count column...")
+                await conn.execute(
+                    """
+                    ALTER TABLE universities ADD COLUMN course_count INTEGER DEFAULT 0;
+                    UPDATE universities u SET course_count = (
+                        SELECT COUNT(*) FROM (
+                            SELECT id FROM undergraduate_courses WHERE university_id = u.id
+                            UNION ALL
+                            SELECT id FROM postgraduate_courses WHERE university_id = u.id
+                        ) AS all_courses
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_universities_course_count ON universities(course_count DESC);
+                    """
+                )
+                logger.info("Universities database migration completed successfully.")
+            else:
+                logger.info("Universities database is up to date (course_count column exists).")
+        except Exception as e:
+            logger.error(f"Failed to run universities database migration: {e}")
+
+
 async def init_pool() -> None:
     """Initialize the asyncpg connection pool for the universities database."""
     global _pool
@@ -27,6 +63,7 @@ async def init_pool() -> None:
             command_timeout=30,
         )
         logger.info("Universities database pool initialized successfully.")
+        await run_migrations(_pool)
     except Exception as e:
         logger.error(f"Failed to initialize universities database pool: {e}")
         raise

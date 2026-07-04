@@ -244,7 +244,7 @@ async def list_universities(
                     ur.qs_rank_2026,
                     ur.national_rank,
                     ur.overall_score,
-                    COUNT(DISTINCT c.id) AS course_count,
+                    u.course_count,
                     ROUND(AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END)::numeric, 2) AS avg_tuition_fee,
                     MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
                     COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
@@ -268,7 +268,7 @@ async def list_universities(
                 LEFT JOIN courses c ON c.university_id = u.id
                 LEFT JOIN university_scholarships us ON us.university_id = u.id
                 GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
-                         ur.qs_rank_2026, ur.national_rank, ur.overall_score
+                         u.course_count, ur.qs_rank_2026, ur.national_rank, ur.overall_score
             )
             SELECT * FROM ranked_unis
             WHERE country_rank <= 2
@@ -467,7 +467,7 @@ async def list_universities(
             ur.qs_rank_2026,
             ur.national_rank,
             ur.overall_score,
-            COUNT(DISTINCT c.id) AS course_count,
+            u.course_count,
             ROUND(AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END)::numeric, 2) AS avg_tuition_fee,
             MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
             COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
@@ -488,7 +488,7 @@ async def list_universities(
         LEFT JOIN university_scholarships us ON us.university_id = u.id
         WHERE {where_sql}
         GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
-                 ur.qs_rank_2026, ur.national_rank, ur.overall_score
+                 u.course_count, ur.qs_rank_2026, ur.national_rank, ur.overall_score
         HAVING TRUE {having_sql}
         ORDER BY {order_sql}
         LIMIT ${limit_param} OFFSET ${offset_param}
