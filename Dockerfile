@@ -6,9 +6,9 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies (curl for healthchecks)
+# Install system dependencies (curl for healthchecks, postgresql-client for DB sync tools)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies
@@ -18,10 +18,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY main.py .
 COPY app/ app/
+COPY db_dumps/ db_dumps/
 
-# Copy startup script and make it executable
+# Copy startup and migration scripts and make them executable
 COPY start.sh .
-RUN chmod +x start.sh
+COPY sync_db_to_rds_container.sh .
+RUN chmod +x start.sh sync_db_to_rds_container.sh
 
 # Expose port
 EXPOSE 8000
