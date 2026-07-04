@@ -667,7 +667,7 @@ async def get_university_courses(
     degree_level: Optional[str] = Query(None, description="Filter by degree level"),
     search: Optional[str] = Query(None, description="Search course name"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(20, ge=1, le=2000),
 ):
     """Return paginated courses for a specific university."""
     cache_key = f"courses:{university_id}:dl={degree_level or ''}&s={search or ''}&p={page}&ps={page_size}"
