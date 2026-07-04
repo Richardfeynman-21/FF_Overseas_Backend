@@ -6,7 +6,9 @@ courses, and scholarships from the universities database.
 
 import logging
 import math
-from typing import Optional
+import time
+from collections import OrderedDict
+from typing import Optional, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -15,6 +17,87 @@ from app.db import get_pool
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/universities", tags=["Universities"])
+
+# ---------------------------------------------------------------------------
+# LRU Cache for API Endpoints (In-Memory)
+# ---------------------------------------------------------------------------
+class LRUCache:
+    def __init__(self, maxsize: int = 5000, default_ttl: int = 86400):
+        self.cache = OrderedDict()
+        self.maxsize = maxsize
+        self.default_ttl = default_ttl
+
+    def get(self, key: str) -> Optional[Any]:
+        if key not in self.cache:
+            return None
+        value, expiry = self.cache[key]
+        if time.time() > expiry:
+            del self.cache[key]
+            return None
+        self.cache.move_to_end(key)
+        return value
+
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        if key in self.cache:
+            del self.cache[key]
+        elif len(self.cache) >= self.maxsize:
+            self.cache.popitem(last=False)
+        expiry = time.time() + (ttl if ttl is not None else self.default_ttl)
+        self.cache[key] = (value, expiry)
+
+    def clear(self) -> None:
+        self.cache.clear()
+
+api_cache = LRUCache(maxsize=5000, default_ttl=86400) # 24 hours cache for static university data
+
+# ---------------------------------------------------------------------------
+# Helper: get courses CTE subquery SQL based on filtered degree levels
+# ---------------------------------------------------------------------------
+def get_courses_cte(degree_levels_str: Optional[str] = None) -> str:
+    has_ug = False
+    has_pg = False
+    
+    if degree_levels_str:
+        levels = [l.strip().lower() for l in degree_levels_str.split(",")]
+        for l in levels:
+            if 'bachelor' in l:
+                has_ug = True
+            if 'master' in l or 'phd' in l:
+                has_pg = True
+    else:
+        has_ug = True
+        has_pg = True
+
+    if has_ug and has_pg:
+        return """
+            (
+                SELECT id, university_id, course_name, 'Bachelor' AS degree_level, duration_years, language, tuition_fee, currency FROM undergraduate_courses
+                UNION ALL
+                SELECT id, university_id, course_name, 
+                       CASE 
+                           WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD'
+                           ELSE 'Master'
+                       END AS degree_level, 
+                       duration_years, language, tuition_fee, currency FROM postgraduate_courses
+            )
+        """
+    elif has_ug:
+        return """
+            (
+                SELECT id, university_id, course_name, 'Bachelor' AS degree_level, duration_years, language, tuition_fee, currency FROM undergraduate_courses
+            )
+        """
+    else:
+        return """
+            (
+                SELECT id, university_id, course_name, 
+                       CASE 
+                           WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD'
+                           ELSE 'Master'
+                       END AS degree_level, 
+                       duration_years, language, tuition_fee, currency FROM postgraduate_courses
+            )
+        """
 
 # ---------------------------------------------------------------------------
 # Course type keyword mappings
@@ -51,20 +134,39 @@ QS_RANK_NUMERIC_EXPR = (
 @router.get("/filters/options")
 async def get_filter_options():
     """Return available filter values with counts."""
+    cache_key = "filter_options"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     pool = get_pool()
     async with pool.acquire() as conn:
         country_rows = await conn.fetch(
             "SELECT country, COUNT(*) AS count FROM universities GROUP BY country ORDER BY country"
         )
         degree_rows = await conn.fetch(
-            "SELECT degree_level, COUNT(DISTINCT university_id) AS count "
-            "FROM courses GROUP BY degree_level ORDER BY degree_level"
+            """
+            SELECT 'Bachelor' AS degree_level, COUNT(DISTINCT university_id) AS count FROM undergraduate_courses
+            UNION ALL
+            SELECT 
+                CASE 
+                    WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD'
+                    ELSE 'Master'
+                END AS degree_level,
+                COUNT(DISTINCT university_id) AS count
+            FROM postgraduate_courses
+            GROUP BY degree_level
+            ORDER BY degree_level
+            """
         )
 
-    return {
+    res = {
         "countries": [{"value": r["country"], "count": r["count"]} for r in country_rows],
         "degree_levels": [{"value": r["degree_level"], "count": r["count"]} for r in degree_rows],
     }
+    api_cache.set(cache_key, res)
+    return res
+
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +175,28 @@ async def get_filter_options():
 @router.get("/courses/search")
 async def course_autocomplete(q: str = Query("", min_length=1, description="Search prefix")):
     """Return up to 20 distinct course names matching the query."""
+    cache_key = f"autocomplete:{q.strip().lower()}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     pool = get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT DISTINCT course_name FROM courses "
-            "WHERE course_name ILIKE $1 ORDER BY course_name LIMIT 20",
+            """
+            WITH courses AS (
+                SELECT course_name FROM undergraduate_courses
+                UNION ALL
+                SELECT course_name FROM postgraduate_courses
+            )
+            SELECT DISTINCT course_name FROM courses
+            WHERE course_name ILIKE $1 ORDER BY course_name LIMIT 20
+            """,
             f"%{q}%",
         )
-    return [r["course_name"] for r in rows]
+    res = [r["course_name"] for r in rows]
+    api_cache.set(cache_key, res)
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +223,15 @@ async def list_universities(
     pool = get_pool()
 
     if featured:
+        cache_key = "featured"
+        cached = api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         # Special query returning top 2 ranked universities from each country
         sql = f"""
-            WITH ranked_unis AS (
+            WITH courses AS {get_courses_cte()},
+            ranked_unis AS (
                 SELECT
                     u.id,
                     u.name,
@@ -117,6 +239,8 @@ async def list_universities(
                     u.alpha_two_code,
                     u.state_province,
                     u.web_pages,
+                    u.logo_url,
+                    u.image_url,
                     ur.qs_rank_2026,
                     ur.national_rank,
                     ur.overall_score,
@@ -143,7 +267,7 @@ async def list_universities(
                 LEFT JOIN university_rankings ur ON ur.university_id = u.id
                 LEFT JOIN courses c ON c.university_id = u.id
                 LEFT JOIN university_scholarships us ON us.university_id = u.id
-                GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages,
+                GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
                          ur.qs_rank_2026, ur.national_rank, ur.overall_score
             )
             SELECT * FROM ranked_unis
@@ -166,6 +290,8 @@ async def list_universities(
                 "alpha_two_code": row["alpha_two_code"],
                 "state_province": row["state_province"],
                 "web_pages": row["web_pages"] or [],
+                "logo_url": row["logo_url"],
+                "image_url": row["image_url"],
                 "qs_rank_2026": row["qs_rank_2026"],
                 "national_rank": row["national_rank"],
                 "overall_score": float(row["overall_score"]) if row["overall_score"] is not None else None,
@@ -177,18 +303,29 @@ async def list_universities(
                 "degree_levels": row["degree_levels"] or [],
             })
             
-        return {
+        res = {
             "universities": universities,
             "total": len(universities),
             "page": 1,
             "page_size": len(universities),
             "total_pages": 1,
         }
+        api_cache.set(cache_key, res)
+        return res
+
+
+    # Cache lookup for regular queries
+    cache_key = f"list:search={search or ''}&countries={countries or ''}&degree_levels={degree_levels or ''}&course_search={course_search or ''}&course_types={course_types or ''}&fee_range={fee_range or ''}&min_ranking={min_ranking or ''}&sort_by={sort_by or ''}&page={page}&page_size={page_size}&featured={featured}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     # ----- Build WHERE clauses and params dynamically -----
     where_clauses: list[str] = []
     params: list = []
     param_idx = 0  # tracks $1, $2, ...
+
+    courses_relation = get_courses_cte(degree_levels)
 
     # Search filter – match university name OR any course name
     if search:
@@ -302,6 +439,7 @@ async def list_universities(
 
     # ----- Count query -----
     count_sql = f"""
+        WITH courses AS {courses_relation}
         SELECT COUNT(*) FROM (
             SELECT u.id
             FROM universities u
@@ -316,6 +454,7 @@ async def list_universities(
 
     # ----- Main data query -----
     data_sql = f"""
+        WITH courses AS {courses_relation}
         SELECT
             u.id,
             u.name,
@@ -323,6 +462,8 @@ async def list_universities(
             u.alpha_two_code,
             u.state_province,
             u.web_pages,
+            u.logo_url,
+            u.image_url,
             ur.qs_rank_2026,
             ur.national_rank,
             ur.overall_score,
@@ -346,7 +487,7 @@ async def list_universities(
         LEFT JOIN courses c ON c.university_id = u.id
         LEFT JOIN university_scholarships us ON us.university_id = u.id
         WHERE {where_sql}
-        GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages,
+        GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
                  ur.qs_rank_2026, ur.national_rank, ur.overall_score
         HAVING TRUE {having_sql}
         ORDER BY {order_sql}
@@ -370,6 +511,8 @@ async def list_universities(
             "alpha_two_code": row["alpha_two_code"],
             "state_province": row["state_province"],
             "web_pages": row["web_pages"] or [],
+            "logo_url": row["logo_url"],
+            "image_url": row["image_url"],
             "qs_rank_2026": row["qs_rank_2026"],
             "national_rank": row["national_rank"],
             "overall_score": float(row["overall_score"]) if row["overall_score"] is not None else None,
@@ -383,13 +526,15 @@ async def list_universities(
 
     total_pages = math.ceil(total / page_size) if total else 0
 
-    return {
+    res = {
         "universities": universities,
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
     }
+    api_cache.set(cache_key, res)
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +543,11 @@ async def list_universities(
 @router.get("/{university_id}")
 async def get_university_detail(university_id: int):
     """Return full detail for a single university including rankings, courses, and scholarships."""
+    cache_key = f"detail:{university_id}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     pool = get_pool()
 
     async with pool.acquire() as conn:
@@ -406,7 +556,7 @@ async def get_university_detail(university_id: int):
             """
             SELECT
                 u.id, u.name, u.country, u.alpha_two_code, u.state_province,
-                u.domains, u.web_pages, u.created_at,
+                u.domains, u.web_pages, u.logo_url, u.image_url, u.created_at,
                 ur.qs_rank_2026, ur.qs_rank_2025, ur.national_rank,
                 ur.academic_reputation_score, ur.employer_reputation_score,
                 ur.faculty_student_score, ur.citations_per_faculty_score,
@@ -425,7 +575,8 @@ async def get_university_detail(university_id: int):
 
         # First 20 courses
         courses = await conn.fetch(
-            """
+            f"""
+            WITH courses AS {get_courses_cte()}
             SELECT id, course_name, degree_level, duration_years, language, tuition_fee, currency
             FROM courses WHERE university_id = $1
             ORDER BY degree_level, course_name LIMIT 20
@@ -449,7 +600,7 @@ async def get_university_detail(university_id: int):
     def safe_float(val):
         return float(val) if val is not None else None
 
-    return {
+    res = {
         "university": {
             "id": uni["id"],
             "name": uni["name"],
@@ -458,6 +609,8 @@ async def get_university_detail(university_id: int):
             "state_province": uni["state_province"],
             "domains": uni["domains"] or [],
             "web_pages": uni["web_pages"] or [],
+            "logo_url": uni["logo_url"],
+            "image_url": uni["image_url"],
             "created_at": uni["created_at"].isoformat() if uni["created_at"] else None,
         },
         "rankings": {
@@ -501,6 +654,8 @@ async def get_university_detail(university_id: int):
             for s in scholarships
         ],
     }
+    api_cache.set(cache_key, res)
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +670,11 @@ async def get_university_courses(
     page_size: int = Query(20, ge=1, le=100),
 ):
     """Return paginated courses for a specific university."""
+    cache_key = f"courses:{university_id}:dl={degree_level or ''}&s={search or ''}&p={page}&ps={page_size}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     pool = get_pool()
 
     where_clauses = ["university_id = $1"]
@@ -541,6 +701,8 @@ async def get_university_courses(
     offset_param = param_idx
     params.append((page - 1) * page_size)
 
+    courses_relation = get_courses_cte(degree_level)
+
     async with pool.acquire() as conn:
         # Verify university exists
         exists = await conn.fetchval("SELECT 1 FROM universities WHERE id = $1", university_id)
@@ -548,12 +710,16 @@ async def get_university_courses(
             raise HTTPException(status_code=404, detail="University not found.")
 
         total = await conn.fetchval(
-            f"SELECT COUNT(*) FROM courses WHERE {where_sql}",
+            f"""
+            WITH courses AS {courses_relation}
+            SELECT COUNT(*) FROM courses WHERE {where_sql}
+            """,
             *params[:param_idx - 2],  # without limit/offset
         )
 
         rows = await conn.fetch(
             f"""
+            WITH courses AS {courses_relation}
             SELECT id, course_name, degree_level, duration_years, language, tuition_fee, currency
             FROM courses
             WHERE {where_sql}
@@ -563,7 +729,7 @@ async def get_university_courses(
             *params,
         )
 
-    return {
+    res = {
         "courses": [
             {
                 "id": r["id"],
@@ -581,6 +747,8 @@ async def get_university_courses(
         "page_size": page_size,
         "total_pages": math.ceil(total / page_size) if total else 0,
     }
+    api_cache.set(cache_key, res)
+    return res
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +757,11 @@ async def get_university_courses(
 @router.get("/{university_id}/scholarships")
 async def get_university_scholarships(university_id: int):
     """Return scholarships linked to a specific university."""
+    cache_key = f"scholarships:{university_id}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     pool = get_pool()
 
     async with pool.acquire() as conn:
@@ -608,7 +781,7 @@ async def get_university_scholarships(university_id: int):
             university_id,
         )
 
-    return {
+    res = {
         "scholarships": [
             {
                 "id": r["id"],
@@ -624,3 +797,5 @@ async def get_university_scholarships(university_id: int):
         ],
         "total": len(rows),
     }
+    api_cache.set(cache_key, res)
+    return res
