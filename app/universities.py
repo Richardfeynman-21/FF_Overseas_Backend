@@ -327,12 +327,12 @@ async def list_universities(
 
     courses_relation = get_courses_cte(degree_levels)
 
-    # Search filter – match university name OR any course name
+    # Search filter – match university name OR country OR state/province OR any course name
     if search:
         param_idx += 1
         search_param = param_idx
         where_clauses.append(
-            f"(u.name ILIKE ${search_param} OR EXISTS ("
+            f"(u.name ILIKE ${search_param} OR u.country ILIKE ${search_param} OR u.state_province ILIKE ${search_param} OR EXISTS ("
             f"SELECT 1 FROM courses c_s WHERE c_s.university_id = u.id AND c_s.course_name ILIKE ${search_param}"
             f"))"
         )
