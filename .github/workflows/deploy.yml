@@ -25,9 +25,12 @@ jobs:
 
             # 1. Setup Nginx Configuration (Step C3 & C4)
             echo "Creating Nginx configuration..."
-            sudo cp /home/ec2-user/app/docs/nginx_virtual_host.conf /etc/nginx/sites-available/ffoverseas-api
-            sudo ln -sf /etc/nginx/sites-available/ffoverseas-api /etc/nginx/sites-enabled/ffoverseas-api
-            sudo rm -f /etc/nginx/sites-enabled/default
+            if ! command -v nginx >/dev/null 2>&1; then
+                echo "Nginx not found, installing..."
+                sudo dnf install -y nginx || sudo yum install -y nginx
+            fi
+            sudo mkdir -p /etc/nginx/conf.d
+            sudo cp /home/ec2-user/app/docs/nginx_virtual_host.conf /etc/nginx/conf.d/ffoverseas-api.conf
             
             echo "Testing Nginx configuration..."
             sudo nginx -t
