@@ -25,81 +25,7 @@ jobs:
 
             # 1. Setup Nginx Configuration (Step C3 & C4)
             echo "Creating Nginx configuration..."
-            cat << 'EOF' > /tmp/ffoverseas-api
-# Rate limiting by real visitor IP (from Cloudflare header)
-limit_req_zone $http_cf_connecting_ip zone=api_limit:10m rate=10r/s;
-
-# HTTP → HTTPS redirect
-server {
-    listen 80;
-    server_name api.ffoverseas.in;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name api.ffoverseas.in;
-
-    # ─── Cloudflare Origin Certificate ───
-    ssl_certificate     /etc/nginx/ssl/cloudflare-origin.pem;
-    ssl_certificate_key /etc/nginx/ssl/cloudflare-origin-key.pem;
-
-    # ─── Authenticated Origin Pulls (mutual TLS) ───
-    ssl_client_certificate /etc/nginx/ssl/cloudflare-authenticated-origin-pull.pem;
-    ssl_verify_client on;
-
-    # ─── TLS hardening ───
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    # ─── Security headers ───
-    add_header X-Content-Type-Options    "nosniff" always;
-    add_header X-Frame-Options           "DENY" always;
-    add_header X-XSS-Protection          "1; mode=block" always;
-    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # ─── Reject direct access (no CF-Connecting-IP = not from Cloudflare) ───
-    if ($http_cf_connecting_ip = "") {
-        return 403;
-    }
-
-    # ─── Reverse proxy to FastAPI ───
-    location / {
-        limit_req zone=api_limit burst=20 nodelay;
-
-        proxy_pass         http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $http_cf_connecting_ip;
-        proxy_set_header   X-Forwarded-For   $http_cf_connecting_ip;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-
-        proxy_connect_timeout 10s;
-        proxy_read_timeout    30s;
-        proxy_send_timeout    30s;
-    }
-
-    # ─── Health check ───
-    location = /api/health {
-        proxy_pass         http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Real-IP         $http_cf_connecting_ip;
-        proxy_set_header   X-Forwarded-For   $http_cf_connecting_ip;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-
-    # Block hidden files
-    location ~ /\. {
-        deny all;
-        return 404;
-    }
-}
-EOF
-
-            sudo mv /tmp/ffoverseas-api /etc/nginx/sites-available/ffoverseas-api
+            sudo cp /home/ec2-user/app/docs/nginx_virtual_host.conf /etc/nginx/sites-available/ffoverseas-api
             sudo ln -sf /etc/nginx/sites-available/ffoverseas-api /etc/nginx/sites-enabled/ffoverseas-api
             sudo rm -f /etc/nginx/sites-enabled/default
             
@@ -114,58 +40,12 @@ EOF
             if [ -n "${{ secrets.CF_API_TOKEN }}" ] && [ -n "${{ secrets.CF_ZONE_ID }}" ]; then
                 echo "Creating Cloudflare credentials..."
                 sudo mkdir -p /etc/cloudflare
-                cat << EOF | sudo tee /etc/cloudflare/credentials > /dev/null
-CF_API_TOKEN="${{ secrets.CF_API_TOKEN }}"
-CF_ZONE_ID="${{ secrets.CF_ZONE_ID }}"
-EOF
+                echo "CF_API_TOKEN=\"${{ secrets.CF_API_TOKEN }}\"" | sudo tee /etc/cloudflare/credentials > /dev/null
+                echo "CF_ZONE_ID=\"${{ secrets.CF_ZONE_ID }}\"" | sudo tee -a /etc/cloudflare/credentials > /dev/null
                 sudo chmod 600 /etc/cloudflare/credentials
 
-                echo "Creating DNS update script..."
-                cat << 'EOF' > /tmp/update-cloudflare-dns.sh
-#!/bin/bash
-source /etc/cloudflare/credentials
-CF_RECORD_NAME="api.ffoverseas.in"
-LOG="/var/log/cloudflare-dns-update.log"
-
-IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-CURRENT_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
-
-if [ -z "$CURRENT_IP" ]; then
-    echo "$(date): ERROR - Could not get public IP" >> "$LOG"
-    exit 1
-fi
-
-RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/\${CF_ZONE_ID}/dns_records?name=\${CF_RECORD_NAME}&type=A" \
-    -H "Authorization: Bearer \${CF_API_TOKEN}" -H "Content-Type: application/json" | \
-    python3 -c "import sys,json; print(json.load(sys.stdin)['result'][0]['id'])" 2>/dev/null)
-
-if [ -z "$RECORD_ID" ]; then
-    echo "$(date): ERROR - Could not find DNS record for \${CF_RECORD_NAME}" >> "$LOG"
-    exit 1
-fi
-
-CF_IP=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/\${CF_ZONE_ID}/dns_records/\${RECORD_ID}" \
-    -H "Authorization: Bearer \${CF_API_TOKEN}" -H "Content-Type: application/json" | \
-    python3 -c "import sys,json; print(json.load(sys.stdin)['result']['content'])" 2>/dev/null)
-
-if [ "$CURRENT_IP" = "$CF_IP" ]; then
-    echo "$(date): IP unchanged (\$CURRENT_IP)" >> "$LOG"
-    exit 0
-fi
-
-RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/\${CF_ZONE_ID}/dns_records/\${RECORD_ID}" \
-    -H "Authorization: Bearer \${CF_API_TOKEN}" -H "Content-Type: application/json" \
-    --data "{\"type\":\"A\",\"name\":\"\${CF_RECORD_NAME}\",\"content\":\"\${CURRENT_IP}\",\"ttl\":60,\"proxied\":true}")
-
-SUCCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['success'])" 2>/dev/null)
-
-if [ "$SUCCESS" = "True" ]; then
-    echo "$(date): SUCCESS - Updated \${CF_RECORD_NAME} to \${CURRENT_IP}" >> "$LOG"
-else
-    echo "$(date): FAILED - \${RESPONSE}" >> "$LOG"
-fi
-EOF
-                sudo mv /tmp/update-cloudflare-dns.sh /usr/local/bin/update-cloudflare-dns.sh
+                echo "Installing DNS update script..."
+                sudo cp /home/ec2-user/app/docs/update-cloudflare-dns.sh /usr/local/bin/update-cloudflare-dns.sh
                 sudo chmod +x /usr/local/bin/update-cloudflare-dns.sh
 
                 # Set up cron jobs if not already present
