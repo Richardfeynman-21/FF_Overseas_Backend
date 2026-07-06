@@ -23,6 +23,12 @@ jobs:
             # Pull the latest code from GitHub
             git pull origin main
 
+            # Update Nginx Configuration
+            echo "Updating Nginx configuration..."
+            sudo cp /home/ec2-user/app/docs/nginx_virtual_host.conf /etc/nginx/conf.d/ffoverseas-api.conf
+            sudo nginx -t
+            sudo systemctl reload nginx
+
             # Rebuild and restart the container in background (check for docker compose vs docker-compose)
             if docker compose version >/dev/null 2>&1; then
                 docker compose up --build -d
