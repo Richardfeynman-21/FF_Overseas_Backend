@@ -230,7 +230,6 @@ async def list_universities(
 
         # Special query returning top 2 ranked universities from each country
         sql = f"""
-            WITH courses AS {get_courses_cte()},
             ranked_unis AS (
                 SELECT
                     u.id,
@@ -245,9 +244,31 @@ async def list_universities(
                     ur.national_rank,
                     ur.overall_score,
                     u.course_count,
-                    ROUND(AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END)::numeric, 2) AS avg_tuition_fee,
-                    MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
-                    COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
+                    (
+                        SELECT ROUND(AVG(CASE WHEN tuition_fee > 0 THEN tuition_fee END)::numeric, 2)
+                        FROM (
+                            SELECT tuition_fee FROM undergraduate_courses WHERE university_id = u.id
+                            UNION ALL
+                            SELECT tuition_fee FROM postgraduate_courses WHERE university_id = u.id
+                        ) sub_t
+                    ) AS avg_tuition_fee,
+                    (
+                        SELECT currency FROM (
+                            SELECT currency, COUNT(*) as cnt FROM (
+                                SELECT currency FROM undergraduate_courses WHERE university_id = u.id
+                                UNION ALL
+                                SELECT currency FROM postgraduate_courses WHERE university_id = u.id
+                            ) sub_curr
+                            GROUP BY currency
+                            ORDER BY cnt DESC
+                            LIMIT 1
+                        ) sub_mode
+                    ) AS currency,
+                    (
+                        SELECT COUNT(DISTINCT us.scholarship_id) 
+                        FROM university_scholarships us 
+                        WHERE us.university_id = u.id
+                    ) AS scholarship_count,
                     {QS_RANK_NUMERIC_EXPR} AS rank_numeric,
                     ARRAY(
                         SELECT DISTINCT course_name FROM (
@@ -276,10 +297,6 @@ async def list_universities(
                     ) as country_rank
                 FROM universities u
                 LEFT JOIN university_rankings ur ON ur.university_id = u.id
-                LEFT JOIN courses c ON c.university_id = u.id
-                LEFT JOIN university_scholarships us ON us.university_id = u.id
-                GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
-                         u.course_count, ur.qs_rank_2026, ur.national_rank, ur.overall_score
             )
             SELECT * FROM ranked_unis
             WHERE country_rank <= 2
@@ -407,8 +424,7 @@ async def list_universities(
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
-    # ----- Fee range filter (HAVING on avg_tuition) -----
-    having_clauses: list[str] = []
+    # ----- Fee range filter (subquery on avg_tuition inside WHERE clause) -----
     if fee_range:
         fee_map = {
             "under18k": (None, 18000),
@@ -419,16 +435,21 @@ async def list_universities(
         bounds = fee_map.get(fee_range)
         if bounds:
             low, high = bounds
+            fee_subquery = (
+                "(SELECT AVG(CASE WHEN tuition_fee > 0 THEN tuition_fee END) FROM "
+                "(SELECT tuition_fee FROM undergraduate_courses WHERE university_id = u.id UNION ALL "
+                "SELECT tuition_fee FROM postgraduate_courses WHERE university_id = u.id) sub_fee)"
+            )
             if low is not None:
                 param_idx += 1
-                having_clauses.append(f"AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END) >= ${param_idx}")
+                where_clauses.append(f"{fee_subquery} >= ${param_idx}")
                 params.append(low)
             if high is not None:
                 param_idx += 1
-                having_clauses.append(f"AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END) < ${param_idx}")
+                where_clauses.append(f"{fee_subquery} < ${param_idx}")
                 params.append(high)
 
-    having_sql = (" AND " + " AND ".join(having_clauses)) if having_clauses else ""
+    where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
 
     # ----- Sort order -----
     if sort_by == "courseCount":
@@ -451,16 +472,8 @@ async def list_universities(
     # ----- Count query -----
     count_sql = f"""
         WITH courses AS {courses_relation}
-        SELECT COUNT(*) FROM (
-            SELECT u.id
-            FROM universities u
-            LEFT JOIN university_rankings ur ON ur.university_id = u.id
-            LEFT JOIN courses c ON c.university_id = u.id
-            LEFT JOIN university_scholarships us ON us.university_id = u.id
-            WHERE {where_sql}
-            GROUP BY u.id, ur.qs_rank_2026
-            HAVING TRUE {having_sql}
-        ) sub
+        SELECT COUNT(*) FROM universities u
+        WHERE {where_sql}
     """
 
     # ----- Main data query -----
@@ -479,9 +492,31 @@ async def list_universities(
             ur.national_rank,
             ur.overall_score,
             u.course_count,
-            ROUND(AVG(CASE WHEN c.tuition_fee > 0 THEN c.tuition_fee END)::numeric, 2) AS avg_tuition_fee,
-            MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
-            COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
+            (
+                SELECT ROUND(AVG(CASE WHEN tuition_fee > 0 THEN tuition_fee END)::numeric, 2)
+                FROM (
+                    SELECT tuition_fee FROM undergraduate_courses WHERE university_id = u.id
+                    UNION ALL
+                    SELECT tuition_fee FROM postgraduate_courses WHERE university_id = u.id
+                ) sub_t
+            ) AS avg_tuition_fee,
+            (
+                SELECT currency FROM (
+                    SELECT currency, COUNT(*) as cnt FROM (
+                        SELECT currency FROM undergraduate_courses WHERE university_id = u.id
+                        UNION ALL
+                        SELECT currency FROM postgraduate_courses WHERE university_id = u.id
+                    ) sub_curr
+                    GROUP BY currency
+                    ORDER BY cnt DESC
+                    LIMIT 1
+                ) sub_mode
+            ) AS currency,
+            (
+                SELECT COUNT(DISTINCT us.scholarship_id) 
+                FROM university_scholarships us 
+                WHERE us.university_id = u.id
+            ) AS scholarship_count,
             {QS_RANK_NUMERIC_EXPR} AS rank_numeric,
             ARRAY(
                 SELECT DISTINCT course_name FROM (
@@ -506,12 +541,7 @@ async def list_universities(
             ) AS degree_levels
         FROM universities u
         LEFT JOIN university_rankings ur ON ur.university_id = u.id
-        LEFT JOIN courses c ON c.university_id = u.id
-        LEFT JOIN university_scholarships us ON us.university_id = u.id
         WHERE {where_sql}
-        GROUP BY u.id, u.name, u.country, u.alpha_two_code, u.state_province, u.web_pages, u.logo_url, u.image_url,
-                 u.course_count, ur.qs_rank_2026, ur.national_rank, ur.overall_score
-        HAVING TRUE {having_sql}
         ORDER BY {order_sql}
         LIMIT ${limit_param} OFFSET ${offset_param}
     """
