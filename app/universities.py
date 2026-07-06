@@ -353,16 +353,14 @@ async def list_universities(
     params: list = []
     param_idx = 0  # tracks $1, $2, ...
 
-    courses_relation = get_courses_cte(degree_levels)
-
     # Search filter – match university name OR country OR state/province OR any course name
     if search:
         param_idx += 1
         search_param = param_idx
         where_clauses.append(
-            f"(u.name ILIKE ${search_param} OR u.country ILIKE ${search_param} OR u.state_province ILIKE ${search_param} OR EXISTS ("
-            f"SELECT 1 FROM courses c_s WHERE c_s.university_id = u.id AND c_s.course_name ILIKE ${search_param}"
-            f"))"
+            f"(u.name ILIKE ${search_param} OR u.country ILIKE ${search_param} OR u.state_province ILIKE ${search_param} OR "
+            f"EXISTS (SELECT 1 FROM undergraduate_courses uc_s WHERE uc_s.university_id = u.id AND uc_s.course_name ILIKE ${search_param}) OR "
+            f"EXISTS (SELECT 1 FROM postgraduate_courses pc_s WHERE pc_s.university_id = u.id AND pc_s.course_name ILIKE ${search_param}))"
         )
         params.append(f"%{search}%")
 
@@ -379,18 +377,30 @@ async def list_universities(
     if degree_levels:
         dl_list = [d.strip() for d in degree_levels.split(",") if d.strip()]
         if dl_list:
-            placeholders = ", ".join(f"${param_idx + i + 1}" for i in range(len(dl_list)))
-            where_clauses.append(
-                f"EXISTS (SELECT 1 FROM courses c_dl WHERE c_dl.university_id = u.id AND c_dl.degree_level IN ({placeholders}))"
-            )
-            params.extend(dl_list)
-            param_idx += len(dl_list)
+            has_ug = any('bachelor' in d.lower() for d in dl_list)
+            has_pg = any('master' in d.lower() or 'phd' in d.lower() for d in dl_list)
+            
+            dl_conditions = []
+            if has_ug:
+                dl_conditions.append("EXISTS (SELECT 1 FROM undergraduate_courses uc_dl WHERE uc_dl.university_id = u.id)")
+            if has_pg:
+                placeholders = ", ".join(f"${param_idx + i + 1}" for i in range(len(dl_list)))
+                dl_conditions.append(
+                    f"EXISTS (SELECT 1 FROM postgraduate_courses pc_dl WHERE pc_dl.university_id = u.id AND "
+                    f"(CASE WHEN pc_dl.course_name ILIKE '%phd%' OR pc_dl.course_name ILIKE '%doctor%' OR pc_dl.course_name ILIKE '%dphil%' THEN 'PhD' ELSE 'Master' END) IN ({placeholders}))"
+                )
+                params.extend(dl_list)
+                param_idx += len(dl_list)
+            
+            if dl_conditions:
+                where_clauses.append(f"({' OR '.join(dl_conditions)})")
 
     # Course-name search
     if course_search:
         param_idx += 1
         where_clauses.append(
-            f"EXISTS (SELECT 1 FROM courses c_cn WHERE c_cn.university_id = u.id AND c_cn.course_name ILIKE ${param_idx})"
+            f"(EXISTS (SELECT 1 FROM undergraduate_courses uc_cn WHERE uc_cn.university_id = u.id AND uc_cn.course_name ILIKE ${param_idx}) OR "
+            f"EXISTS (SELECT 1 FROM postgraduate_courses pc_cn WHERE pc_cn.university_id = u.id AND pc_cn.course_name ILIKE ${param_idx}))"
         )
         params.append(f"%{course_search}%")
 
@@ -402,13 +412,16 @@ async def list_universities(
             kws = COURSE_TYPE_KEYWORDS.get(ct, [])
             all_keywords.extend(kws)
         if all_keywords:
-            ilike_parts = []
+            ilike_parts_ug = []
+            ilike_parts_pg = []
             for kw in all_keywords:
                 param_idx += 1
-                ilike_parts.append(f"c_ct.course_name ILIKE ${param_idx}")
+                ilike_parts_ug.append(f"uc_ct.course_name ILIKE ${param_idx}")
+                ilike_parts_pg.append(f"pc_ct.course_name ILIKE ${param_idx}")
                 params.append(f"%{kw}%")
             where_clauses.append(
-                f"EXISTS (SELECT 1 FROM courses c_ct WHERE c_ct.university_id = u.id AND ({' OR '.join(ilike_parts)}))"
+                f"(EXISTS (SELECT 1 FROM undergraduate_courses uc_ct WHERE uc_ct.university_id = u.id AND ({' OR '.join(ilike_parts_ug)})) OR "
+                f"EXISTS (SELECT 1 FROM postgraduate_courses pc_ct WHERE pc_ct.university_id = u.id AND ({' OR '.join(ilike_parts_pg)})))"
             )
 
     # Ranking filter
@@ -471,14 +484,12 @@ async def list_universities(
 
     # ----- Count query -----
     count_sql = f"""
-        WITH courses AS {courses_relation}
         SELECT COUNT(*) FROM universities u
         WHERE {where_sql}
     """
 
     # ----- Main data query -----
     data_sql = f"""
-        WITH courses AS {courses_relation}
         SELECT
             u.id,
             u.name,
