@@ -51,10 +51,10 @@ app = FastAPI(title="FF Overseas Backend", lifespan=lifespan)
 # Register routers
 app.include_router(universities_router)
 
-# Setup CORS
-origins = ["*"]
-if settings.ALLOWED_ORIGINS and settings.ALLOWED_ORIGINS != "*":
-    origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+# Setup CORS — never fall back to wildcard "*"
+origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+if not origins:
+    origins = ["https://ffoverseas.in", "https://www.ffoverseas.in"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +63,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global API key middleware — protects ALL routes except /api/health
+@app.middleware("http")
+async def verify_api_key(request: Request, call_next):
+    # Allow health checks without API key
+    if request.url.path == "/api/health":
+        return await call_next(request)
+    # Allow CORS preflight requests (OPTIONS) without API key
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    # Verify API key if configured
+    if settings.FRONTEND_API_KEY:
+        api_key_header = request.headers.get("X-ORBIT-API-KEY")
+        if not api_key_header or api_key_header != settings.FRONTEND_API_KEY:
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Access forbidden: Invalid API Key."}
+            )
+    return await call_next(request)
 
 class ChatRequest(BaseModel):
     sessionId: str
@@ -200,16 +219,9 @@ async def get_chat_reply(system_prompt: str, history: list, user_message: str) -
 
 @app.post("/api/public-chat")
 async def chat_endpoint(request: ChatRequest, req: Request):
-    # Verify API Key if configured
-    if settings.FRONTEND_API_KEY:
-        api_key_header = req.headers.get("X-ORBIT-API-KEY")
-        if not api_key_header or api_key_header != settings.FRONTEND_API_KEY:
-            return JSONResponse(
-                status_code=403,
-                content={"error": "Access forbidden: Invalid API Key."}
-            )
+    # API key is now verified globally by the verify_api_key middleware
 
-    client_ip = req.client.host if req.client else "unknown"
+    client_ip = req.headers.get("X-Real-IP", req.client.host if req.client else "unknown")
     
     if not check_rate_limit(client_ip):
         return JSONResponse(

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     UNIVERSITIES_DATABASE_URL: str = "postgresql://ffoverseas:ffoverseas_pass@localhost:5432/universities_db"
 
     # Access Control & Security
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,https://ffoverseas.in,https://www.ffoverseas.in"
+    ALLOWED_ORIGINS: str = "https://ffoverseas.in,https://www.ffoverseas.in"
     FRONTEND_API_KEY: Optional[str] = None
 
 settings = Settings()
