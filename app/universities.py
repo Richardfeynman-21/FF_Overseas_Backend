@@ -249,16 +249,27 @@ async def list_universities(
                     MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
                     COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
                     {QS_RANK_NUMERIC_EXPR} AS rank_numeric,
-                    (SELECT ARRAY(
-                        SELECT DISTINCT c2.course_name FROM courses c2
-                        WHERE c2.university_id = u.id
-                        ORDER BY c2.course_name LIMIT 6
-                    )) AS sample_programs,
-                    (SELECT ARRAY(
-                        SELECT DISTINCT c3.degree_level FROM courses c3
-                        WHERE c3.university_id = u.id
-                        ORDER BY c3.degree_level
-                    )) AS degree_levels,
+                    ARRAY(
+                        SELECT DISTINCT course_name FROM (
+                            SELECT course_name FROM undergraduate_courses WHERE university_id = u.id
+                            UNION ALL
+                            SELECT course_name FROM postgraduate_courses WHERE university_id = u.id
+                        ) sub_c
+                        ORDER BY course_name LIMIT 6
+                    ) AS sample_programs,
+                    ARRAY(
+                        SELECT DISTINCT degree_level FROM (
+                            SELECT 'Bachelor' AS degree_level FROM undergraduate_courses WHERE university_id = u.id
+                            UNION ALL
+                            SELECT 
+                               CASE 
+                                   WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD'
+                                   ELSE 'Master'
+                               END AS degree_level
+                            FROM postgraduate_courses WHERE university_id = u.id
+                        ) sub_dl
+                        ORDER BY degree_level
+                    ) AS degree_levels,
                     ROW_NUMBER() OVER (
                         PARTITION BY u.country 
                         ORDER BY {QS_RANK_NUMERIC_EXPR} ASC NULLS LAST
@@ -472,16 +483,27 @@ async def list_universities(
             MODE() WITHIN GROUP (ORDER BY c.currency) AS currency,
             COUNT(DISTINCT us.scholarship_id) AS scholarship_count,
             {QS_RANK_NUMERIC_EXPR} AS rank_numeric,
-            (SELECT ARRAY(
-                SELECT DISTINCT c2.course_name FROM courses c2
-                WHERE c2.university_id = u.id
-                ORDER BY c2.course_name LIMIT 6
-            )) AS sample_programs,
-            (SELECT ARRAY(
-                SELECT DISTINCT c3.degree_level FROM courses c3
-                WHERE c3.university_id = u.id
-                ORDER BY c3.degree_level
-            )) AS degree_levels
+            ARRAY(
+                SELECT DISTINCT course_name FROM (
+                    SELECT course_name FROM undergraduate_courses WHERE university_id = u.id
+                    UNION ALL
+                    SELECT course_name FROM postgraduate_courses WHERE university_id = u.id
+                ) sub_c
+                ORDER BY course_name LIMIT 6
+            ) AS sample_programs,
+            ARRAY(
+                SELECT DISTINCT degree_level FROM (
+                    SELECT 'Bachelor' AS degree_level FROM undergraduate_courses WHERE university_id = u.id
+                    UNION ALL
+                    SELECT 
+                       CASE 
+                           WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD'
+                           ELSE 'Master'
+                       END AS degree_level
+                    FROM postgraduate_courses WHERE university_id = u.id
+                ) sub_dl
+                ORDER BY degree_level
+            ) AS degree_levels
         FROM universities u
         LEFT JOIN university_rankings ur ON ur.university_id = u.id
         LEFT JOIN courses c ON c.university_id = u.id

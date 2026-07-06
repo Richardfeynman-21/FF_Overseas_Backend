@@ -17,6 +17,16 @@ async def run_migrations(pool: asyncpg.Pool) -> None:
     """Run universities database schema migrations on startup."""
     async with pool.acquire() as conn:
         try:
+            # Create indexes on foreign keys to optimize joins and prevent 524 timeouts
+            await conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_undergraduate_courses_uni_id ON undergraduate_courses(university_id);
+                CREATE INDEX IF NOT EXISTS idx_postgraduate_courses_uni_id ON postgraduate_courses(university_id);
+                CREATE INDEX IF NOT EXISTS idx_university_rankings_uni_id ON university_rankings(university_id);
+                CREATE INDEX IF NOT EXISTS idx_university_scholarships_uni_id ON university_scholarships(university_id);
+                """
+            )
+
             # Check if column exists
             exists = await conn.fetchval(
                 """
