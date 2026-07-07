@@ -230,7 +230,7 @@ async def list_universities(
 
         # Special query returning top 2 ranked universities from each country
         sql = f"""
-            ranked_unis AS (
+            WITH ranked_unis AS (
                 SELECT
                     u.id,
                     u.name,
