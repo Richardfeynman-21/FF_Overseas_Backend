@@ -7,6 +7,8 @@ courses, and scholarships from the universities database.
 import logging
 import math
 import time
+import sqlite3
+import json
 from collections import OrderedDict
 from typing import Optional, Any
 
@@ -19,36 +21,80 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/universities", tags=["Universities"])
 
 # ---------------------------------------------------------------------------
-# LRU Cache for API Endpoints (In-Memory)
+# SQLite Shared Cache for API Endpoints (Multi-Process Safe)
 # ---------------------------------------------------------------------------
-class LRUCache:
-    def __init__(self, maxsize: int = 5000, default_ttl: int = 86400):
-        self.cache = OrderedDict()
+class SharedSqliteCache:
+    def __init__(self, db_path: str = "/tmp/api_cache.db", maxsize: int = 5000, default_ttl: int = 86400):
+        self.db_path = db_path
         self.maxsize = maxsize
         self.default_ttl = default_ttl
+        self._init_db()
+
+    def _init_db(self):
+        try:
+            with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS cache (
+                        key TEXT PRIMARY KEY,
+                        value TEXT,
+                        expiry REAL
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_expiry ON cache(expiry);")
+        except Exception as e:
+            logger.error(f"Failed to initialize SQLite shared cache: {e}")
 
     def get(self, key: str) -> Optional[Any]:
-        if key not in self.cache:
+        try:
+            with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value, expiry FROM cache WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                val_str, expiry = row
+                if time.time() > expiry:
+                    cursor.execute("DELETE FROM cache WHERE key = ?", (key,))
+                    return None
+                return json.loads(val_str)
+        except Exception as e:
+            logger.error(f"Error reading from SQLite shared cache: {e}")
             return None
-        value, expiry = self.cache[key]
-        if time.time() > expiry:
-            del self.cache[key]
-            return None
-        self.cache.move_to_end(key)
-        return value
 
     def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
-        if key in self.cache:
-            del self.cache[key]
-        elif len(self.cache) >= self.maxsize:
-            self.cache.popitem(last=False)
-        expiry = time.time() + (ttl if ttl is not None else self.default_ttl)
-        self.cache[key] = (value, expiry)
+        try:
+            val_str = json.dumps(value)
+            ttl = ttl if ttl is not None else self.default_ttl
+            expiry = time.time() + ttl
+            with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO cache (key, value, expiry) VALUES (?, ?, ?)",
+                    (key, val_str, expiry),
+                )
+                # Enforce maxsize by deleting the oldest entries if count exceeds maxsize
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM cache")
+                count = cursor.fetchone()[0]
+                if count > self.maxsize:
+                    cursor.execute(
+                        "DELETE FROM cache WHERE key IN (SELECT key FROM cache ORDER BY expiry ASC LIMIT ?)",
+                        (count - self.maxsize,),
+                    )
+        except Exception as e:
+            logger.error(f"Error writing to SQLite shared cache: {e}")
 
     def clear(self) -> None:
-        self.cache.clear()
+        try:
+            with sqlite3.connect(self.db_path, timeout=10.0) as conn:
+                conn.execute("DELETE FROM cache")
+        except Exception as e:
+            logger.error(f"Error clearing SQLite shared cache: {e}")
 
-api_cache = LRUCache(maxsize=5000, default_ttl=86400) # 24 hours cache for static university data
+api_cache = SharedSqliteCache(maxsize=10000, default_ttl=86400) # 24 hours shared cache for static university data
 
 # ---------------------------------------------------------------------------
 # Helper: get courses CTE subquery SQL based on filtered degree levels

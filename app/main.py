@@ -27,9 +27,23 @@ async def cleanup_sessions_loop():
         await asyncio.sleep(600)  # every 10 minutes
         now = time.time()
         ONE_HOUR = 3600
+        
+        # Clean up expired chat sessions
         expired_keys = [k for k, v in sessions.items() if now - v["createdAt"] > ONE_HOUR]
         for k in expired_keys:
             sessions.pop(k, None)
+            
+        # Clean up inactive rate limiting IP records to prevent memory leak
+        expired_ips = []
+        for ip, timestamps in list(ip_requests.items()):
+            # Keep only timestamps within the active rate limit window
+            active_timestamps = [t for t in timestamps if now - t < settings.RATE_LIMIT_WINDOW]
+            if not active_timestamps:
+                expired_ips.append(ip)
+            else:
+                ip_requests[ip] = active_timestamps
+        for ip in expired_ips:
+            ip_requests.pop(ip, None)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
