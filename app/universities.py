@@ -339,14 +339,14 @@ async def list_universities(
                     ) AS degree_levels,
                     ROW_NUMBER() OVER (
                         PARTITION BY u.country 
-                        ORDER BY {QS_RANK_NUMERIC_EXPR} ASC NULLS LAST
+                        ORDER BY {QS_RANK_NUMERIC_EXPR} ASC NULLS LAST, ur.national_rank ASC NULLS LAST
                     ) as country_rank
                 FROM universities u
                 LEFT JOIN university_rankings ur ON ur.university_id = u.id
             )
             SELECT * FROM ranked_unis
             WHERE country_rank <= 2
-            ORDER BY rank_numeric ASC NULLS LAST
+            ORDER BY rank_numeric ASC NULLS LAST, national_rank ASC NULLS LAST
         """
         try:
             async with pool.acquire() as conn:
@@ -516,7 +516,7 @@ async def list_universities(
     elif sort_by == "tuitionAsc":
         order_sql = "avg_tuition_fee ASC NULLS LAST"
     else:  # default: rank
-        order_sql = "rank_numeric ASC NULLS LAST"
+        order_sql = "rank_numeric ASC NULLS LAST, ur.national_rank ASC NULLS LAST"
 
     # ----- Pagination params -----
     param_idx += 1
