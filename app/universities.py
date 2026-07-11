@@ -697,7 +697,9 @@ async def get_university_detail(university_id: int):
         scholarships = await conn.fetch(
             """
             SELECT s.id, s.name, s.type, s.amount, s.coverage, s.eligibility,
-                   s.target_degree_level, s.country
+                   s.target_degree_level, s.country, s.provider, s.currency,
+                   s.deadline, s.application_url, s.description, s.renewable,
+                   s.min_gpa, s.field_of_study, s.number_of_awards
             FROM scholarships s
             JOIN university_scholarships us ON us.scholarship_id = s.id
             WHERE us.university_id = $1
@@ -759,6 +761,15 @@ async def get_university_detail(university_id: int):
                 "eligibility": s["eligibility"],
                 "target_degree_level": s["target_degree_level"],
                 "country": s["country"],
+                "provider": s["provider"],
+                "currency": s["currency"],
+                "deadline": s["deadline"],
+                "application_url": s["application_url"],
+                "description": s["description"],
+                "renewable": s["renewable"],
+                "min_gpa": s["min_gpa"],
+                "field_of_study": s["field_of_study"],
+                "number_of_awards": s["number_of_awards"],
             }
             for s in scholarships
         ],
@@ -881,7 +892,9 @@ async def get_university_scholarships(university_id: int):
         rows = await conn.fetch(
             """
             SELECT s.id, s.name, s.type, s.amount, s.coverage, s.eligibility,
-                   s.target_degree_level, s.country
+                   s.target_degree_level, s.country, s.provider, s.currency,
+                   s.deadline, s.application_url, s.description, s.renewable,
+                   s.min_gpa, s.field_of_study, s.number_of_awards
             FROM scholarships s
             JOIN university_scholarships us ON us.scholarship_id = s.id
             WHERE us.university_id = $1
@@ -901,6 +914,15 @@ async def get_university_scholarships(university_id: int):
                 "eligibility": r["eligibility"],
                 "target_degree_level": r["target_degree_level"],
                 "country": r["country"],
+                "provider": r["provider"],
+                "currency": r["currency"],
+                "deadline": r["deadline"],
+                "application_url": r["application_url"],
+                "description": r["description"],
+                "renewable": r["renewable"],
+                "min_gpa": r["min_gpa"],
+                "field_of_study": r["field_of_study"],
+                "number_of_awards": r["number_of_awards"],
             }
             for r in rows
         ],
