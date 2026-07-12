@@ -16,3 +16,7 @@ env/
 # IDEs
 .vscode/
 .idea/
+
+# RDS Database Update Guide
+RDS_DATABASE_UPDATE_GUIDE.md
+
