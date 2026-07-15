@@ -58,7 +58,7 @@ pub async fn create_student(
 /// Find a student by email.
 pub async fn find_student_by_email(pool: &PgPool, email: &str) -> Result<Option<Student>, AppError> {
     sqlx::query_as::<_, Student>(
-        "SELECT id, email, password_hash, full_name, phone, country, preferred_destination, preferred_degree_level, preferred_intake, profile_data, is_verified, is_active, created_at, assigned_agent_id FROM students WHERE email = $1"
+        "SELECT id, email, password_hash, full_name, phone, country, preferred_destination, preferred_degree_level, preferred_intake, profile_data, is_verified, is_active, status, created_at, assigned_agent_id FROM students WHERE email = $1"
     )
     .bind(email)
     .fetch_optional(pool)
