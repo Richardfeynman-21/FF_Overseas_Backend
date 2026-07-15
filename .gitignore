@@ -20,3 +20,12 @@ env/
 # RDS Database Update Guide
 RDS_DATABASE_UPDATE_GUIDE.md
 
+# Rust Backend ignores
+backend_rust/target/
+backend_rust/.env
+backend_rust/uploads/
+backend_rust/data/
+backend_rust/*.db
+backend_rust/rate_limit.db
+
+

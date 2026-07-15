@@ -1,0 +1,64 @@
+[package]
+name = "ff-overseas-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7.5", features = ["ws", "multipart", "macros"] }
+tokio = { version = "1.38.0", features = ["full"] }
+
+# Database (SQLx for Postgres and SQLite)
+sqlx = { version = "0.7.4", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "sqlite",
+    "uuid",
+    "chrono",
+    "macros"
+] }
+
+# Serialization & validation
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.120"
+validator = { version = "0.18.1", features = ["derive"] }
+
+# Security & Cryptography
+argon2 = { version = "0.5.3", features = ["std"] }
+jsonwebtoken = "9.3.0"
+aes-gcm = "0.10.3"
+rand = "0.8.5"
+
+# Utilities
+hex = "0.4.3"
+uuid = { version = "1.9.1", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4.38", features = ["serde"] }
+thiserror = "1.0.61"
+anyhow = "1.0.86"
+tokio-util = { version = "0.7", features = ["io"] }
+
+dotenvy = "0.15.7"
+envy = "0.4.2"
+reqwest = { version = "0.12.5", features = ["json"] }
+dashmap = "5.5.3"
+lettre = { version = "0.11.7", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
+# Middleware and tracing
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.5.2", features = [
+    "cors",
+    "trace",
+    "set-header",
+    "request-id",
+    "fs"
+] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

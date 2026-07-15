@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ffoverseas_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ffoverseas
+      POSTGRES_PASSWORD: ffoverseas_pass
+      POSTGRES_DB: ffoverseas_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ffoverseas -d ffoverseas_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ffoverseas_rust_backend
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://ffoverseas:ffoverseas_pass@postgres:5432/ffoverseas_db
+      - SQLITE_URL=sqlite:///app/data/local.db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - sqlite_data:/app/data
+
+volumes:
+  pgdata:
+  sqlite_data:

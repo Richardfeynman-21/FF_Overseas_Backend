@@ -322,7 +322,7 @@ async def list_universities(
                             UNION ALL
                             SELECT course_name FROM postgraduate_courses WHERE university_id = u.id
                         ) sub_c
-                        ORDER BY course_name LIMIT 6
+                        ORDER BY course_name LIMIT 50
                     ) AS sample_programs,
                     ARRAY(
                         SELECT DISTINCT degree_level FROM (
@@ -581,7 +581,7 @@ async def list_universities(
                     UNION ALL
                     SELECT course_name FROM postgraduate_courses WHERE university_id = u.id
                 ) sub_c
-                ORDER BY course_name LIMIT 6
+                ORDER BY course_name LIMIT 50
             ) AS sample_programs,
             ARRAY(
                 SELECT DISTINCT degree_level FROM (
@@ -642,6 +642,201 @@ async def list_universities(
         "page_size": page_size,
         "total_pages": total_pages,
     }
+    api_cache.set(cache_key, res)
+    return res
+
+
+# ---------------------------------------------------------------------------
+# GET /api/universities/courses (global course catalog search)
+# ---------------------------------------------------------------------------
+@router.get("/courses")
+async def search_courses(
+    search: Optional[str] = Query(None, description="Search by course name or university name"),
+    countries: Optional[str] = Query(None, description="Comma-separated country names"),
+    university_ids: Optional[str] = Query(None, description="Comma-separated university IDs"),
+    degree_levels: Optional[str] = Query(None, description="Comma-separated: Bachelor, Master, PhD"),
+    fee_range: Optional[str] = Query(None, description="under18k, 18kto35k, 35kto55k, over55k"),
+    min_ranking: Optional[str] = Query(None, description="top10, top50, top100, top500"),
+    sort_by: Optional[str] = Query("rank", description="rank, tuition_asc, tuition_desc, acceptance_desc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """
+    Search and list all courses from undergraduate and postgraduate tables with joins and filters.
+    """
+    pool = get_pool()
+    
+    # Cache key
+    cache_key = f"courses_search:s={search or ''}&c={countries or ''}&unis={university_ids or ''}&dl={degree_levels or ''}&fr={fee_range or ''}&mr={min_ranking or ''}&sb={sort_by or ''}&p={page}&ps={page_size}"
+    cached = api_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    where_clauses: list[str] = []
+    params: list = []
+    param_idx = 0
+
+    # 1. Search Query (matches course name, university name, or country)
+    if search:
+        param_idx += 1
+        search_param = param_idx
+        where_clauses.append(
+            f"(ac.course_name ILIKE ${search_param} OR u.name ILIKE ${search_param} OR u.country ILIKE ${search_param})"
+        )
+        params.append(f"%{search}%")
+
+    # 2. Country Filter
+    if countries:
+        country_list = [c.strip() for c in countries.split(",") if c.strip()]
+        if country_list:
+            placeholders = ", ".join(f"${param_idx + i + 1}" for i in range(len(country_list)))
+            where_clauses.append(f"u.country IN ({placeholders})")
+            params.extend(country_list)
+            param_idx += len(country_list)
+
+    # 2.5 University Filter
+    if university_ids:
+        uni_id_list = [int(uid.strip()) for uid in university_ids.split(",") if uid.strip().isdigit()]
+        if uni_id_list:
+            placeholders = ", ".join(f"${param_idx + i + 1}" for i in range(len(uni_id_list)))
+            where_clauses.append(f"u.id IN ({placeholders})")
+            params.extend(uni_id_list)
+            param_idx += len(uni_id_list)
+
+    # 3. Degree Level Filter
+    if degree_levels:
+        dl_list = [d.strip() for d in degree_levels.split(",") if d.strip()]
+        if dl_list:
+            placeholders = ", ".join(f"${param_idx + i + 1}" for i in range(len(dl_list)))
+            where_clauses.append(f"ac.degree_level IN ({placeholders})")
+            params.extend(dl_list)
+            param_idx += len(dl_list)
+
+    # 4. Fee Range Filter
+    if fee_range:
+        fee_map = {
+            "under18k": (None, 18000),
+            "18kto35k": (18000, 35000),
+            "35kto55k": (35000, 55000),
+            "over55k": (55000, None),
+        }
+        bounds = fee_map.get(fee_range)
+        if bounds:
+            low, high = bounds
+            if low is not None:
+                param_idx += 1
+                where_clauses.append(f"ac.tuition_fee >= ${param_idx}")
+                params.append(low)
+            if high is not None:
+                param_idx += 1
+                where_clauses.append(f"ac.tuition_fee < ${param_idx}")
+                params.append(high)
+
+    # 5. Ranking Filter (QS Rank of the university)
+    if min_ranking:
+        rank_map = {"top10": 10, "top50": 50, "top100": 100, "top500": 500}
+        rank_val = rank_map.get(min_ranking)
+        if rank_val:
+            param_idx += 1
+            # Parse ranking from university_rankings table
+            where_clauses.append(
+                f"NULLIF(regexp_replace(ur.qs_rank_2026, '[^0-9].*', '', 'g'), '')::int <= ${param_idx}"
+            )
+            params.append(rank_val)
+
+    where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
+
+    # Sorting
+    if sort_by == "tuition_asc":
+        order_sql = "ac.tuition_fee ASC NULLS LAST"
+    elif sort_by == "tuition_desc":
+        order_sql = "ac.tuition_fee DESC NULLS LAST"
+    elif sort_by == "acceptance_desc":
+        order_sql = "NULLIF(regexp_replace(ur.qs_rank_2026, '[^0-9].*', '', 'g'), '')::int DESC NULLS LAST"
+    else:  # Default to rank
+        order_sql = "NULLIF(regexp_replace(ur.qs_rank_2026, '[^0-9].*', '', 'g'), '')::int ASC NULLS LAST, ur.national_rank ASC NULLS LAST"
+
+    # Pagination Offset/Limit
+    offset = (page - 1) * page_size
+    
+    # Query total matching courses
+    count_sql = f"""
+        WITH all_courses AS (
+            SELECT id, university_id, course_name, duration_years, tuition_fee, currency, 'Bachelor' AS degree_level FROM undergraduate_courses
+            UNION ALL
+            SELECT id, university_id, course_name, duration_years, tuition_fee, currency,
+                CASE WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD' ELSE 'Master' END AS degree_level
+            FROM postgraduate_courses
+        )
+        SELECT COUNT(*)
+        FROM all_courses ac
+        JOIN universities u ON u.id = ac.university_id
+        LEFT JOIN university_rankings ur ON ur.university_id = ac.university_id
+        WHERE {where_sql}
+    """
+
+    # Query matching courses
+    courses_sql = f"""
+        WITH all_courses AS (
+            SELECT id, university_id, course_name, duration_years, tuition_fee, currency, 'Bachelor' AS degree_level FROM undergraduate_courses
+            UNION ALL
+            SELECT id, university_id, course_name, duration_years, tuition_fee, currency,
+                CASE WHEN course_name ILIKE '%phd%' OR course_name ILIKE '%doctor%' OR course_name ILIKE '%dphil%' THEN 'PhD' ELSE 'Master' END AS degree_level
+            FROM postgraduate_courses
+        )
+        SELECT 
+            ac.id AS course_id,
+            ac.course_name,
+            ac.duration_years,
+            ac.tuition_fee,
+            ac.currency,
+            ac.degree_level,
+            u.id AS university_id,
+            u.name AS university_name,
+            u.country,
+            u.alpha_two_code,
+            ur.qs_rank_2026,
+            ur.national_rank
+        FROM all_courses ac
+        JOIN universities u ON u.id = ac.university_id
+        LEFT JOIN university_rankings ur ON ur.university_id = ac.university_id
+        WHERE {where_sql}
+        ORDER BY {order_sql}
+        LIMIT {page_size} OFFSET {offset}
+    """
+
+    async with pool.acquire() as conn:
+        total = await conn.fetchval(count_sql, *params)
+        rows = await conn.fetch(courses_sql, *params)
+
+    # Build response format matching what UniversitiesTab expects
+    courses_list = []
+    for r in rows:
+        courses_list.append({
+            "course_id": r["course_id"],
+            "course_name": r["course_name"],
+            "degree_level": r["degree_level"],
+            "duration_years": r["duration_years"],
+            "tuition_fee": float(r["tuition_fee"]) if r["tuition_fee"] is not None else None,
+            "currency": r["currency"],
+            "university": {
+                "id": r["university_id"],
+                "name": r["university_name"],
+                "country": r["country"],
+                "alpha_two_code": r["alpha_two_code"],
+                "qs_rank_2026": r["qs_rank_2026"],
+                "national_rank": r["national_rank"]
+            }
+        })
+
+    res = {
+        "courses": courses_list,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size
+    }
+    
     api_cache.set(cache_key, res)
     return res
 
@@ -930,3 +1125,5 @@ async def get_university_scholarships(university_id: int):
     }
     api_cache.set(cache_key, res)
     return res
+
+

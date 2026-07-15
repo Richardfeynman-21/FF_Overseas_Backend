@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  web:
+  # 🐍 Python FastAPI Backend (AI Chat & Universities)
+  python_backend:
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,3 +12,25 @@ services:
       - "127.0.0.1:8000:8000"
     env_file:
       - .env
+    volumes:
+      - python_cache:/tmp
+
+  # 🦀 Rust Axum Backend (Auth, CRM, WS Chat, Docs)
+  rust_backend:
+    build:
+      context: ./backend_rust
+      dockerfile: Dockerfile
+    container_name: ffoverseas_rust_backend
+    restart: always
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - ./backend_rust/.env
+    volumes:
+      - rust_uploads:/app/uploads
+      - rust_sqlite_data:/app/data
+
+volumes:
+  python_cache:
+  rust_uploads:
+  rust_sqlite_data:
