@@ -20,6 +20,8 @@ services:
     build:
       context: ./backend_rust
       dockerfile: Dockerfile
+      args:
+        - DATABASE_URL=${DATABASE_URL}
     container_name: ffoverseas_rust_backend
     restart: always
     ports:

@@ -9,6 +9,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+ARG DATABASE_URL
+ENV DATABASE_URL=$DATABASE_URL
+
 # Copy Cargo configuration files.
 # Using wildcard Cargo.lock* so the build doesn't fail if Cargo.lock hasn't been generated yet.
 COPY Cargo.toml Cargo.lock* ./
