@@ -1,5 +1,5 @@
 # Stage 1: Build the Rust binary
-FROM rust:1.85-slim-bookworm AS builder
+FROM rust:latest-slim-bookworm AS builder
 
 # Install system dependencies for compilation
 RUN apt-get update && apt-get install -y \
