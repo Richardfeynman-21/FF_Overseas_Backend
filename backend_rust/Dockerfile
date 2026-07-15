@@ -21,7 +21,7 @@ RUN rm -rf src/
 # Copy the real source code and migrations, then compile the final binary
 COPY migrations ./migrations
 COPY src ./src
-RUN cargo build --release
+RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Final runtime image
 FROM debian:bookworm-slim
