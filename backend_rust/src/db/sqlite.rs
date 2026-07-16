@@ -1,4 +1,6 @@
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use chrono::Utc;
@@ -16,9 +18,12 @@ pub async fn create_pool(sqlite_url: &str) -> Result<SqlitePool, sqlx::Error> {
         }
     }
 
-    sqlx::sqlite::SqlitePoolOptions::new()
+    let options = SqliteConnectOptions::from_str(sqlite_url)?
+        .create_if_missing(true);
+
+    SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(sqlite_url)
+        .connect_with(options)
         .await
 }
 
