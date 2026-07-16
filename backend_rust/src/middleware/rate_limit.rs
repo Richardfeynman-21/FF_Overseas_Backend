@@ -11,9 +11,9 @@ use chrono::Utc;
 use crate::state::AppState;
 use crate::errors::AppError;
 
-const RATE_LIMIT_WINDOW: i64 = 600; // 10 minutes in seconds
-const RATE_LIMIT_DEFAULT_MAX: i64 = 20; // 20 requests default limit
-const RATE_LIMIT_UNIVERSITY_MAX: i64 = 1000; // 1000 requests for university list/shortlist
+const RATE_LIMIT_WINDOW: i64 = 60; // 1 minute in seconds
+const RATE_LIMIT_DEFAULT_MAX: i64 = 500; // 500 requests per minute default limit
+const RATE_LIMIT_UNIVERSITY_MAX: i64 = 10000; // 10000 requests per minute for university list/shortlist
 
 pub async fn rate_limiter(
     State(state): State<AppState>,
