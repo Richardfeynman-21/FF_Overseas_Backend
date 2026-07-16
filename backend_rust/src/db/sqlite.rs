@@ -5,9 +5,8 @@ use chrono::Utc;
 
 pub async fn create_pool(sqlite_url: &str) -> Result<SqlitePool, sqlx::Error> {
     // Ensure parent directories exist
-    if sqlite_url.starts_with("sqlite://") {
-        let path_str = sqlite_url.trim_start_matches("sqlite://");
-        let path_str = path_str.split('?').next().unwrap_or(path_str);
+    if let Some(mut path_str) = sqlite_url.strip_prefix("sqlite://") {
+        path_str = path_str.split('?').next().unwrap_or(path_str);
         if path_str != ":memory:" {
             if let Some(parent) = std::path::Path::new(path_str).parent() {
                 if !parent.as_os_str().is_empty() {
